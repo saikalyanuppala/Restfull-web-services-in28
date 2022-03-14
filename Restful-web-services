@@ -1,0 +1,231 @@
+RESTFull web services
+-------------------------------------
+Return POST as URI with (URI location = ServletUriComponentsBuilder.fromCurrentRequest().path("/{id}").buildAndExpand(savedUser.getId()).toUri(); ResponseEntity.created(location).build())
+Exception handling(@ControllerAdvise, @RestController, @ResponseStatus, @ExceptionHandler , ResponseEntityExceptionHandler(Abstract class))
+HATEOAS implementation(Link, WebMVCLinkBuilder, EnityModel<User>)
+Internationalization(MessageSource, LocaleContextHolder.getLocale(), Accept-language (in header))
+Validation(@size, min, max,past,future (@Valid @RequestBody))
+Content Neogotiation(xml, json)
+Swagger
+HAL Explorer
+Actuator
+static and dynamic filtering for Jackson(@JsonIgnore, @JsonIgnoreProperties, @JsonFilter, SimpleBeanPropertyFilter, FilterProider, SimpleFilterProvider, MappingJacksonValue)
+versioning restful services (with params, headers)
+
+
+
+--------------------------------------------------------
+
+
+package com.adp.rest.controller;
+
+import static org.springframework.hateoas.server.mvc.WebMvcLinkBuilder.linkTo;
+import static org.springframework.hateoas.server.mvc.WebMvcLinkBuilder.methodOn;
+
+import java.net.URI;
+import java.util.List;
+import java.util.Optional;
+
+import javax.validation.Valid;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.hateoas.EntityModel;
+import org.springframework.hateoas.server.mvc.WebMvcLinkBuilder;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
+
+import com.adp.rest.bean.User;
+import com.adp.rest.exception.UserNotFoundException;
+import com.adp.rest.service.UserService;
+
+@RestController
+public class UserController {
+
+	@Autowired
+	private UserService userService;
+
+	@GetMapping("/users")
+	public List<User> findAllUsers() {
+		return userService.findAll();
+	}
+
+	@GetMapping("/users/{id}")
+	public EntityModel<User> findUserById(@PathVariable("id") Integer id) {
+		Optional<User> user = userService.findOne(id);
+		if (user.isEmpty())
+			throw new UserNotFoundException("user not found with id " + id);
+
+		EntityModel<User> model = EntityModel.of(user.get());
+
+		WebMvcLinkBuilder linkToUsers = linkTo(methodOn(this.getClass()).findAllUsers());
+		WebMvcLinkBuilder linkToDelete = linkTo(methodOn(this.getClass(), id).deleteUserById(id));
+
+		model.add(linkToUsers.withRel("all-users"));
+		model.add(linkToDelete.withRel("delete-user"));
+
+		return model;
+	}
+
+	@PostMapping("/users")
+	public ResponseEntity<Object> createUser(@Valid @RequestBody User user) {
+		User savedUser = userService.save(user);
+		URI location = ServletUriComponentsBuilder.fromCurrentRequest().path("/{id}").buildAndExpand(savedUser.getId())
+				.toUri();
+		return ResponseEntity.created(location).build();
+
+	}
+
+	@DeleteMapping("/users/{id}")
+	public ResponseEntity<String> deleteUserById(@PathVariable("id") Integer id) {
+		boolean isDeleted = userService.deleteById(id);
+		if (!isDeleted)
+			throw new UserNotFoundException("User not found with id " + id);
+		return ResponseEntity.ok("User deleted");
+	}
+
+}
+------------------------------------------------------------------------------
+
+package com.adp.rest.controller;
+
+import org.springframework.http.converter.json.MappingJacksonValue;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.adp.rest.bean.SomeBean;
+import com.fasterxml.jackson.databind.ser.FilterProvider;
+import com.fasterxml.jackson.databind.ser.impl.SimpleBeanPropertyFilter;
+import com.fasterxml.jackson.databind.ser.impl.SimpleFilterProvider;
+
+@RestController
+public class SomeBeanFilterController {
+
+	@GetMapping("/all")
+	public MappingJacksonValue filterFieldsDynamically() {
+		SomeBean bean = new SomeBean("value1", "value2", "value3");
+
+		SimpleBeanPropertyFilter filter = SimpleBeanPropertyFilter.filterOutAllExcept("field1", "field2");
+		FilterProvider filters = new SimpleFilterProvider().addFilter("someBeanFilter", filter);
+
+		MappingJacksonValue mapping = new MappingJacksonValue(bean);
+		mapping.setFilters(filters);
+		return mapping;
+	}
+}
+
+@JsonFilter("someBeanFilter")
+public class SomeBean {
+---
+---
+}
+
+-------------------------------------------------------------------------
+
+package com.adp.rest.exception;
+
+import java.util.Date;
+
+import org.springframework.data.crossstore.ChangeSetPersister.NotFoundException;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.annotation.ControllerAdvice;
+import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.context.request.WebRequest;
+import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
+
+@RestController
+@ControllerAdvice
+public class CustomizedResponseEnityExceptionHandler extends ResponseEntityExceptionHandler {
+
+	@ExceptionHandler(Exception.class)
+	public final ResponseEntity<Object> handleAllExceptions(Exception ex, WebRequest request) {
+		ExceptionResponse response = new ExceptionResponse(new Date(), ex.getMessage(), request.getDescription(false));
+		return new ResponseEntity<Object>(response, HttpStatus.INTERNAL_SERVER_ERROR);
+	}
+
+	@ExceptionHandler(NotFoundException.class)
+	public final ResponseEntity<Object> handleUserNotFoundException(UserNotFoundException ex, WebRequest request) {
+		ExceptionResponse response = new ExceptionResponse(new Date(), ex.getMessage(), request.getDescription(false));
+		return new ResponseEntity<Object>(response, HttpStatus.NOT_FOUND);
+	}
+
+	@Override
+	protected ResponseEntity<Object> handleMethodArgumentNotValid(MethodArgumentNotValidException ex,
+			HttpHeaders headers, HttpStatus status, WebRequest request) {
+		ExceptionResponse resp = new ExceptionResponse(new Date(), "Validation Failed", ex.getBindingResult().toString());
+		return new ResponseEntity<Object>(resp, HttpStatus.BAD_REQUEST);
+	}
+}
+
+
+
+public class ExceptionResponse {
+
+	private Date timestamp;
+	private String message;
+	private String details;
+
+}
+
+@ResponseStatus(code = HttpStatus.NOT_FOUND)
+public class UserNotFoundException extends RuntimeException {
+	public UserNotFoundException(String message) {
+		super(message);
+  }
+}
+
+------------------------------------------------------------------------------------
+
+
+#logging.level.org.springframework=debug
+spring.jackson.serialization.write-dates-as-timestamps=false
+management.endpoints.web.exposure.include=*
+
+spring.jpa.show-sql=true
+spring.jpa.hibernate.ddl-auto=update
+
+
+spring.datasource.url=jdbc:mysql://${RDS_HOSTNAME:localhost}:${RDS_PORT:3306}/${RDS_DB_NAME:restapi}
+spring.datasource.username=${RDS_USERNAME:root}
+spring.datasource.password=${RDS_PASSWORD:bhiShma#89}
+spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.MySQL57Dialect
+
+
+-----------------------------------------------------------------------------------------------
+
+@RestController
+public class HelloWorldController {
+
+	@Autowired
+	private MessageSource messageSource;
+
+	@GetMapping(path = "/hello-world")
+	public String sayHello() {
+		return "Hello World 100 times";
+	}
+
+	@GetMapping("/hello-world-bean")
+	public HelloWorldBean helloWorldBean() {
+		return new HelloWorldBean("Hello World Bean 100 times");
+	}
+
+	@GetMapping("/path-variable/{id}")
+	public HelloWorldBean getByIdHelloWorldBean(@PathVariable("id") Integer id) {
+		return new HelloWorldBean("Hello World Bean path variables 100 times " + id);
+	}
+
+	@GetMapping("/hello-world-i18n")
+	public String sayHelloInternationalized() {
+		return messageSource.getMessage("hello.world", new Integer[] { 100 }, "Default message",
+				LocaleContextHolder.getLocale());
+	}
+}
